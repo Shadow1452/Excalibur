@@ -9,8 +9,8 @@ fi
 
 # Install required Go packages
 echo "Installing required Go packages..."
-go get golang.org/x/crypto/ssh
-go get github.com/fatih/color
+go install golang.org/x/crypto/ssh
+go install github.com/fatih/color
 
 # Compile the Go code
 echo "Compiling the Go code..."
