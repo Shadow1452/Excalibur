@@ -19,5 +19,5 @@ excalibur.go -host 192.168.0.100 -port 22 -username admin -password-file passwor
 
 The program will start attempting SSH logins using the provided passwords.
 
-Thank you for yousing Excalibur.
+Thank you for using Excalibur.
 
